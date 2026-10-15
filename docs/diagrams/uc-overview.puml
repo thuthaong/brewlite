@@ -1,0 +1,38 @@
+@startuml uc-overview
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Khách hàng\n(Customer)" as Customer
+actor "Nhân viên quầy / Barista\n(Backend Scope)" as Barista
+actor "Cổng thanh toán\n(Mock Payment Service)" as PaymentGateway
+
+rectangle "Hệ thống Đặt Cà Phê Không Tiền Mặt - BrewLite" {
+  usecase "UC-01: Xem menu đồ uống" as UC01
+  usecase "UC-02: Xem chi tiết & Chọn Size/Topping" as UC02
+  usecase "UC-03: Quản lý giỏ hàng" as UC03
+  usecase "UC-04: Đăng ký / Đăng nhập (JWT)" as UC04
+  usecase "UC-05: Đặt và thanh toán đơn hàng" as UC05
+  usecase "UC-06: Xem xác nhận & Lịch sử đơn" as UC06
+  usecase "UC-07: Cập nhật trạng thái đơn\n(Order State Machine)" as UC07
+
+  usecase "UC-05.1: Kiểm tra & Trừ tồn kho\n(Optimistic Locking)" as UC05_Stock
+  usecase "UC-05.2: Xử lý thanh toán\n(Idempotent Payment)" as UC05_Pay
+  usecase "UC-05.3: Áp mã khuyến mãi\n& Cộng điểm Loyalty" as UC05_Promo
+}
+
+Customer --> UC01
+Customer --> UC02
+Customer --> UC03
+Customer --> UC04
+Customer --> UC05
+Customer --> UC06
+
+UC02 .> UC03 : <<extend>>\n(Thêm vào giỏ)
+UC05 ..> UC04 : <<include>>\n(Yêu cầu JWT)
+UC05 ..> UC05_Stock : <<include>>
+UC05 ..> UC05_Pay : <<include>>
+UC05_Promo .> UC05 : <<extend>>\n(Nếu có mã giảm giá)
+
+UC05_Pay --> PaymentGateway
+Barista --> UC07
+@enduml

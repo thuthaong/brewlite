@@ -1,0 +1,24 @@
+@startuml uc-checkout-payment
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Khách hàng\n(Customer)" as Customer
+actor "Cổng thanh toán giả lập\n(Mock Payment Gateway)" as PaymentService
+
+rectangle "Phạm vi Use-Case: Đặt và Thanh toán Đơn hàng (UC-05)" {
+  usecase "UC-05: Đặt và thanh toán\nđơn hàng" as UC05
+  usecase "Xác thực phiên đăng nhập\n(JWT Guard)" as UC_Auth
+  usecase "Kiểm tra & khóa tồn kho\n(Optimistic Locking)" as UC_Stock
+  usecase "Áp dụng mã khuyến mãi\n(Promotion)" as UC_Promo
+  usecase "Thực hiện giao dịch thanh toán\n(Idempotent Key)" as UC_Pay
+  usecase "Cộng điểm thưởng tích lũy\n(Loyalty Points)" as UC_Loyalty
+}
+
+Customer --> UC05
+UC05 ..> UC_Auth : <<include>>
+UC05 ..> UC_Stock : <<include>>
+UC05 ..> UC_Pay : <<include>>
+UC_Promo .> UC05 : <<extend>>\n[Khách nhập mã giảm giá]
+UC_Pay ..> UC_Loyalty : <<include>>\n[Khi thanh toán PAID]
+UC_Pay --> PaymentService
+@enduml
