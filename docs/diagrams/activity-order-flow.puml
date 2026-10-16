@@ -1,0 +1,72 @@
+@startuml activity-order-flow
+title Activity Diagram - Luồng Đặt và Thanh Toán Đồ Uống (End-to-End)
+
+|Khách hàng (Customer)|
+start
+:Mở ứng dụng BrewLite (Web/PWA);
+:Xem danh sách đồ uống (Menu);
+:Chọn sản phẩm, tùy chọn Size (S/M/L) và Topping;
+:Thêm sản phẩm vào Giỏ hàng;
+:Xem Giỏ hàng & Kiểm tra tổng tiền tạm tính;
+:Nhấn nút "Thanh toán";
+
+|Hệ thống BrewLite (Next.js + NestJS)|
+if (Đã đăng nhập (có JWT hợp lệ)?) then (Chưa đăng nhập)
+  |Khách hàng (Customer)|
+  :Nhập thông tin Đăng nhập / Đăng ký;
+  |Hệ thống BrewLite (Next.js + NestJS)|
+  :Xác thực thông tin & Cấp phát JWT Token;
+else (Đã đăng nhập)
+endif
+
+|Khách hàng (Customer)|
+:Chọn phương thức thanh toán (Ví điện tử / Thẻ)\nvà nhập mã khuyến mãi (nếu có);
+:Nhấn nút "Xác nhận trả";
+
+|Hệ thống BrewLite (Next.js + NestJS)|
+:Validate dữ liệu giỏ hàng & Khuyến mãi;
+:Mở Database Transaction & Kiểm tra tồn kho\n(Optimistic Locking);
+
+if (Đủ số lượng tồn kho (stock >= qty)?) then (Hết hàng / Xung đột tồn kho)
+  :Rollback Transaction;
+  :Trả về thông báo lỗi "Sản phẩm hết hàng / Không đủ số lượng";
+  |Khách hàng (Customer)|
+  :Nhận thông báo lỗi & Điều chỉnh lại Giỏ hàng;
+  stop
+else (Còn đủ hàng)
+  |Hệ thống BrewLite (Next.js + NestJS)|
+  :Trừ tồn kho (stock) & Tăng version sản phẩm;
+  :Tạo đơn hàng trạng thái **PENDING**;
+  :Gửi yêu cầu thanh toán kèm **Idempotency-Key**;
+endif
+
+|Cổng thanh toán (Mock Payment Service)|
+:Kiểm tra khóa Idempotency & Xử lý giao dịch;
+
+if (Kết quả giao dịch thanh toán?) then (Thành công - SUCCESS)
+  |Hệ thống BrewLite (Next.js + NestJS)|
+  :Lưu bản ghi Payment;
+  :Chuyển trạng thái đơn sang **PAID**\n(theo Order State Machine);
+  :Cộng điểm tích lũy (Loyalty Points) cho Khách hàng;
+  :Làm rỗng Giỏ hàng tạm thời;
+  |Khách hàng (Customer)|
+  :Xem màn hình Xác nhận đơn hàng\n(Hiển thị Mã đơn #ID & Trạng thái PAID);
+  :Đến quầy nhận đồ uống & Theo dõi lịch sử đơn;
+  stop
+else (Thất bại - FAILED)
+  |Hệ thống BrewLite (Next.js + NestJS)|
+  :Chuyển trạng thái đơn sang **PAYMENT_FAILED**;
+  :Giữ nguyên Giỏ hàng hiện tại của khách;
+  |Khách hàng (Customer)|
+  :Nhận thông báo "Thanh toán thất bại";
+  if (Khách hàng muốn thử lại?) then (Thử lại)
+    :Chọn lại phương thức & Gửi yêu cầu thanh toán mới;
+    stop
+  else (Hủy đơn)
+    |Hệ thống BrewLite (Next.js + NestJS)|
+    :Chuyển trạng thái đơn sang **CANCELLED**\nvà hoàn lại tồn kho;
+    stop
+  endif
+endif
+
+@enduml

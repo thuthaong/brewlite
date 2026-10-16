@@ -1,0 +1,110 @@
+@startuml sequence-checkout
+title Sequence Diagram - UC-05: Đặt và Thanh Toán Đơn Hàng (Checkout & Cashless Payment)
+autonumber
+
+actor "Customer" as Customer
+participant "Next.js UI" as UI
+participant "NestJS API" as API
+database "Database\n(PostgreSQL)" as DB
+participant "Payment Service\n(Mock Gateway)" as PaymentSvc
+
+== Giai đoạn 1: Tạo đơn hàng & Kiểm soát tồn kho (POST /orders) ==
+
+Customer -> UI : Chọn phương thức (Ví/Thẻ),\nnhập promoCode (nếu có) & nhấn "Xác nhận trả"
+activate UI
+UI -> UI : Disable nút bấm (isSubmitting = true)\n& Sinh mã Idempotency-Key (UUID)
+
+UI -> API : POST /orders\nHeaders: { Authorization: Bearer <JWT> }\nBody: { items, promoCode }
+activate API
+
+API -> API : Kiểm tra JWT (JwtAuthGuard)\n& Validate DTO (class-validator)
+
+alt JWT không hợp lệ hoặc dữ liệu sai
+    API --> UI : 401 Unauthorized / 400 Bad Request
+    UI --> Customer : Hiển thị lỗi / Chuyển hướng Đăng nhập
+else JWT và dữ liệu hợp lệ
+    API -> DB : BEGIN TRANSACTION
+    activate DB
+
+    API -> DB : SELECT id, price, stock, version FROM products WHERE id IN (...)
+    DB --> API : Danh sách sản phẩm & version hiện tại
+
+    alt Hết hàng (stock < qty) hoặc xung đột Optimistic Locking (version thay đổi)
+        API -> DB : ROLLBACK TRANSACTION
+        API --> UI : 409 Conflict (Không đủ số lượng tồn kho)
+        UI --> Customer : Thông báo hết hàng & giữ nguyên Giỏ hàng
+    else Còn đủ tồn kho (stock >= qty)
+        API -> DB : UPDATE products SET stock = stock - qty, version = version + 1\nWHERE id = :id AND version = :currentVersion
+        DB --> API : Cập nhật thành công (1 row affected)
+
+        opt Có truyền mã khuyến mãi (promoCode)
+            API -> DB : Kiểm tra & áp dụng Promotion hợp lệ
+            DB --> API : Giá trị giảm giá (discountAmount)
+        end
+
+        API -> DB : INSERT INTO orders (userId, status='PENDING', total)\n& INSERT INTO order_items (...)
+        DB --> API : Trả về Order (orderId, status='PENDING', total)
+
+        API -> DB : COMMIT TRANSACTION
+        deactivate DB
+
+        API --> UI : 201 Created { orderId, status: 'PENDING', total }
+    end
+end
+deactivate API
+
+== Giai đoạn 2: Thanh toán không tiền mặt & Idempotency (POST /payments) ==
+
+UI -> API : POST /payments\nHeaders: { Authorization: Bearer <JWT>, Idempotency-Key: <UUID> }\nBody: { orderId, method: 'WALLET' | 'CARD' }
+activate API
+
+API -> API : Kiểm tra JWT & Validate dữ liệu thanh toán
+API -> DB : SELECT * FROM payments WHERE idempotency_key = :key
+activate DB
+DB --> API : Kết quả tra cứu Idempotency-Key
+deactivate DB
+
+alt Idempotency-Key đã tồn tại (Client gửi lặp lại yêu cầu)
+    API --> UI : 200 OK (Trả về kết quả giao dịch trước đó, không trừ tiền lần 2)
+    UI --> Customer : Hiển thị màn hình kết quả tương ứng
+else Idempotency-Key mới (Xử lý giao dịch lần đầu)
+    API -> PaymentSvc : Xử lý thanh toán (orderId, amount, method)
+    activate PaymentSvc
+
+    alt Thanh toán thành công (Payment SUCCESS)
+        PaymentSvc --> API : Kết quả: SUCCESS (transactionRef)
+        API -> API : Order State Machine: assertTransition(PENDING -> PAID)
+
+        API -> DB : BEGIN TRANSACTION
+        activate DB
+        API -> DB : INSERT INTO payments (orderId, idempotencyKey, amount, method, status='SUCCESS')
+        API -> DB : UPDATE orders SET status = 'PAID' WHERE id = :orderId
+        API -> DB : UPDATE users SET loyalty_points = loyalty_points + :points\n& INSERT INTO loyalty_transactions (...)
+        API -> DB : COMMIT TRANSACTION
+        deactivate DB
+
+        API --> UI : 201 Created { orderId, status: 'PAID', paymentId }
+        UI -> UI : Xóa Giỏ hàng tạm thời (clearCart)
+        UI --> Customer : Hiển thị màn hình Xác nhận đơn hàng\n(Mã đơn #orderId, Trạng thái: PAID)
+
+    else Thanh toán thất bại (Payment FAILED)
+        PaymentSvc --> API : Kết quả: FAILED (errorReason)
+        deactivate PaymentSvc
+        API -> API : Order State Machine: assertTransition(PENDING -> PAYMENT_FAILED)
+
+        API -> DB : BEGIN TRANSACTION
+        activate DB
+        API -> DB : INSERT INTO payments (orderId, idempotencyKey, amount, method, status='FAILED')
+        API -> DB : UPDATE orders SET status = 'PAYMENT_FAILED' WHERE id = :orderId
+        API -> DB : COMMIT TRANSACTION
+        deactivate DB
+
+        API --> UI : 402 Payment Required / 400 { orderId, status: 'PAYMENT_FAILED' }
+        UI -> UI : Giữ nguyên Giỏ hàng hiện tại
+        UI --> Customer : Thông báo "Thanh toán thất bại"\n& Cho phép Thử lại hoặc Hủy đơn
+    end
+end
+deactivate API
+deactivate UI
+
+@enduml

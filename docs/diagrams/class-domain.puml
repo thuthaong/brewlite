@@ -1,0 +1,152 @@
+@startuml class-domain
+title Domain Class Diagram - Hệ thống Đặt Cà Phê Không Tiền Mặt BrewLite
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+
+package "Enums (Trạng thái & Tùy chọn)" {
+  enum OrderStatus {
+    PENDING
+    PAID
+    PREPARING
+    READY
+    COMPLETED
+    PAYMENT_FAILED
+    CANCELLED
+  }
+
+  enum PaymentMethod {
+    WALLET
+    CARD
+  }
+
+  enum PaymentStatus {
+    PENDING
+    SUCCESS
+    FAILED
+  }
+
+  enum ProductSize {
+    S
+    M
+    L
+  }
+
+  enum LoyaltyTxType {
+    EARN
+    REDEEM
+  }
+}
+
+package "Domain Entities (Các lớp thực thể cốt lõi)" {
+  class User {
+    + id : UUID <<PK>>
+    + email : String <<unique>>
+    + passwordHash : String
+    + fullName : String
+    + loyaltyPoints : Integer = 0
+    + createdAt : DateTime
+    --
+    + validatePassword(rawPassword: String) : Boolean
+    + addLoyaltyPoints(points: Integer) : void
+  }
+
+  class Product {
+    + id : UUID <<PK>>
+    + name : String
+    + description : String
+    + price : Decimal
+    + imageUrl : String
+    + stock : Integer
+    + isAvailable : Boolean = true
+    + version : Integer <<OptimisticLock>>
+    --
+    + hasEnoughStock(qty: Integer) : Boolean
+    + deductStock(qty: Integer) : void
+  }
+
+  class Order {
+    + id : UUID <<PK>>
+    + userId : UUID <<FK>>
+    + promotionId : UUID <<FK, nullable>>
+    + status : OrderStatus = PENDING
+    + subtotal : Decimal
+    + discountAmount : Decimal = 0
+    + total : Decimal
+    + createdAt : DateTime
+    + updatedAt : DateTime
+    --
+    + assertTransition(nextStatus: OrderStatus) : void
+    + transitionTo(nextStatus: OrderStatus) : void
+    + calculateTotal() : Decimal
+  }
+
+  class OrderItem {
+    + id : UUID <<PK>>
+    + orderId : UUID <<FK>>
+    + productId : UUID <<FK>>
+    + size : ProductSize
+    + toppings : String[]
+    + unitPrice : Decimal
+    + qty : Integer
+    + lineTotal : Decimal
+    --
+    + calculateLineTotal() : Decimal
+  }
+
+  class Payment {
+    + id : UUID <<PK>>
+    + orderId : UUID <<FK>>
+    + idempotencyKey : String <<unique>>
+    + amount : Decimal
+    + method : PaymentMethod
+    + status : PaymentStatus
+    + transactionRef : String
+    + createdAt : DateTime
+    --
+    + markSuccess(txRef: String) : void
+    + markFailed(reason: String) : void
+  }
+
+  class Promotion {
+    + id : UUID <<PK>>
+    + code : String <<unique>>
+    + description : String
+    + discountPercent : Integer
+    + maxDiscountAmount : Decimal
+    + minOrderAmount : Decimal
+    + isActive : Boolean
+    + validFrom : DateTime
+    + validUntil : DateTime
+    --
+    + isValidForOrder(subtotal: Decimal, now: DateTime) : Boolean
+    + computeDiscount(subtotal: Decimal) : Decimal
+  }
+
+  class LoyaltyTransaction {
+    + id : UUID <<PK>>
+    + userId : UUID <<FK>>
+    + orderId : UUID <<FK>>
+    + pointsChanged : Integer
+    + type : LoyaltyTxType
+    + createdAt : DateTime
+  }
+}
+
+' --- Mối quan hệ và Multiplicity ---
+User "1" --> "0..*" Order : places >
+User "1" --> "0..*" LoyaltyTransaction : accumulates >
+
+Order "1" *-- "1..*" OrderItem : contains >
+Order "1" --> "0..*" Payment : paid via >
+Order "0..*" --> "0..1" Promotion : applies >
+Order "1" --> "0..1" LoyaltyTransaction : generates >
+
+OrderItem "0..*" --> "1" Product : refers to >
+
+Order ..> OrderStatus
+OrderItem ..> ProductSize
+Payment ..> PaymentMethod
+Payment ..> PaymentStatus
+LoyaltyTransaction ..> LoyaltyTxType
+
+@enduml
