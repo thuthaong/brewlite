@@ -1,0 +1,71 @@
+@startuml deployment
+title UML Deployment Diagram - Môi trường Local, CI/CD và Production (BrewLite)
+skinparam componentStyle uml2
+left to right direction
+
+node "Thiết bị Người dùng\n(Client Device)" as ClientNode {
+  node "Mobile / Desktop Browser\n(PWA Support)" as Browser {
+    artifact "Next.js Client Bundle\n(React / Zustand)" as WebClient
+  }
+}
+
+cloud "Môi trường CI/CD\n(GitHub Infrastructure)" as CICDZone {
+  node "GitHub Actions Runner" as GHARunner {
+    component "CI/CD Workflow\n(Lint -> Test -> Build -> Deploy)" as Pipeline
+  }
+  node "GitHub Container Registry\n(GHCR - ghcr.io)" as Registry {
+    artifact "brewlite-web:sha\n(Docker Image)" as WebImg
+    artifact "brewlite-api:sha\n(Docker Image)" as ApiImg
+  }
+}
+
+cloud "Môi trường Production Cloud\n(Render / Railway Cloud Platform)" as ProdZone {
+  node "Edge CDN / Web Service\n(Next.js Container :3000)" as WebServer {
+    component "Next.js App Server\n(SSR & Static Assets)" as NextApp
+    note bottom of NextApp
+      Env Vars:
+      - NEXT_PUBLIC_API_URL
+    end note
+  }
+
+  node "Application Container\n(NestJS API Service :4000)" as ApiServer {
+    component "NestJS REST API\n(Auth, Orders, Payments)" as NestApp
+    component "Mock Payment Adapter\n(Internal Service)" as MockPay
+    component "Health Check & Logger\n(GET /health)" as HealthComp
+    note bottom of NestApp
+      Secrets / Env Vars:
+      - DATABASE_URL
+      - JWT_SECRET
+      - PORT=4000
+    end note
+  }
+
+  database "Managed PostgreSQL 16\n(Private Network :5432)" as DbNode {
+    folder "Persistent Storage Volume\n(pgdata)" as PgVolume {
+      artifact "brewlite_db\n(Tables & Migrations)" as DbData
+    }
+  }
+}
+
+node "Môi trường Phát triển\n(Developer Local Machine)" as LocalZone {
+  node "Docker Compose Engine" as DockerLocal {
+    component "web (:3000)\napi (:4000)\npostgres (:5432)" as LocalContainers
+  }
+}
+
+WebClient <===> NextApp : "HTTPS (Port 443)\nHTML / Static / PWA"
+WebClient <===> NestApp : "HTTPS (Port 443)\nREST JSON + Bearer JWT"
+
+NestApp --> MockPay : "In-process Call"
+NestApp ===> DbData : "TCP/TLS (Internal Port 5432)\nPrisma/TypeORM Connection Pool"
+
+LocalZone ..> CICDZone : "git push / Pull Request\n(HTTPS / SSH)"
+Pipeline --> Registry : "Docker Build & Push\n(HTTPS)"
+Pipeline --> WebServer : "Trigger Deploy Webhook\n(Secrets)"
+Pipeline --> ApiServer : "Trigger Deploy + Run Migration"
+Pipeline ..> HealthComp : "Smoke Test\nGET /health (HTTPS)"
+
+WebServer <.up. WebImg : "Pull Image"
+ApiServer <.up. ApiImg : "Pull Image"
+
+@enduml
