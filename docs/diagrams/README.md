@@ -34,3 +34,11 @@ Thư mục này lưu trữ toàn bộ mã nguồn PlantUML (`.puml`) và hình �
 - File ảnh: [class-domain.svg](./class-domain.svg)
 
 ![Class Diagram](./class-domain.svg)
+
+---
+
+## 5. UML Deployment Diagram (Task 3.2)
+- File nguồn: [deployment.puml](./deployment.puml)
+- File ảnh: [deployment.svg](./deployment.svg)
+
+![Deployment Diagram](./deployment.svg)
